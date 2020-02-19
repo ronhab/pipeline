@@ -28,7 +28,7 @@ func makeNumberSource(start, end, jump int) *numberSource {
 	return &numberSource{start: start, end: end, jump: jump, current: start}
 }
 
-func (src *numberSource) doWork(ctx context.Context) (interface{}, error) {
+func (src *numberSource) DoWork(ctx context.Context) (interface{}, error) {
 	if src.randomError > 0 && rand.Intn(src.randomError) == 0 {
 		return nil, stupidRandomError{"source"}
 	}
@@ -46,7 +46,7 @@ type numberSink struct {
 	randomError		int
 }
 
-func (sink *numberSink) doWork(ctx context.Context, input interface{}) error {
+func (sink *numberSink) DoWork(ctx context.Context, input interface{}) error {
 	switch v := input.(type) {
 	case int:
 		if sink.randomError > 0 && rand.Intn(sink.randomError) == 0 {
@@ -66,7 +66,7 @@ type numberAdder struct {
 	randomError		int
 }
 
-func (filter *numberAdder) doWork(ctx context.Context, input interface{}) (interface{}, error) {
+func (filter *numberAdder) DoWork(ctx context.Context, input interface{}) (interface{}, error) {
 	switch v := input.(type) {
 	case int:
 		if filter.randomError > 0 && rand.Intn(filter.randomError) == 0 {
@@ -78,7 +78,7 @@ func (filter *numberAdder) doWork(ctx context.Context, input interface{}) (inter
 	}
 }
 
-func (filter *numberAdder) maxWorkers() int {
+func (filter *numberAdder) MaxWorkers() int {
 	return filter.workers
 }
 
@@ -88,7 +88,7 @@ type numberMultiplyer struct {
 	randomError				int
 }
 
-func (filter *numberMultiplyer) doWork(ctx context.Context, input interface{}) (interface{}, error) {
+func (filter *numberMultiplyer) DoWork(ctx context.Context, input interface{}) (interface{}, error) {
 	switch v := input.(type) {
 	case int:
 		if filter.randomError > 0 && rand.Intn(filter.randomError) == 0 {
@@ -100,7 +100,7 @@ func (filter *numberMultiplyer) doWork(ctx context.Context, input interface{}) (
 	}
 }
 
-func (filter *numberMultiplyer) maxWorkers() int {
+func (filter *numberMultiplyer) MaxWorkers() int {
 	return filter.workers
 }
 

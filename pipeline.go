@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-// NoMoreData is the "error" a source doWork() method should return when it doesn't have any more data
+// NoMoreData is the "error" a source DoWork() method should return when it doesn't have any more data
 type NoMoreData struct {
 }
 
@@ -15,7 +15,7 @@ func (e NoMoreData) Error() string {
 	return "Not an error: no more data"
 }
 
-// InvalidInputType is the error a pipeline element doWork() method should return when it receive data with the wrong type
+// InvalidInputType is the error a pipeline element DoWork() method should return when it receive data with the wrong type
 type InvalidInputType struct {
 	Expected	string
 	Actual		string
@@ -27,18 +27,18 @@ func (e InvalidInputType) Error() string {
 
 // Source represents an element on the pipeline which has no input
 type Source interface {
-	doWork(ctx context.Context) (interface{}, error)
+	DoWork(ctx context.Context) (interface{}, error)
 }
 
 // Filter represents an element on the pipeline which has both input and output
 type Filter interface {
-	maxWorkers() int
-	doWork(ctx context.Context, input interface{}) (interface{}, error)
+	MaxWorkers() int
+	DoWork(ctx context.Context, input interface{}) (interface{}, error)
 }
 
 // Sink represents an element on  the pipeline which has no output
 type Sink interface {
-	doWork(ctx context.Context, input interface{}) error
+	DoWork(ctx context.Context, input interface{}) error
 }
 
 // Pipeline represents a pipeline object
@@ -80,7 +80,7 @@ func (p *Pipeline) asyncSource(ctx context.Context, wg *sync.WaitGroup) (<-chan 
 		defer close(errc)
 		defer wg.Done()
 		for {
-			elem, err := p.source.doWork(ctx)
+			elem, err := p.source.DoWork(ctx)
 			if err != nil {
 				switch err.(type) {
 				case NoMoreData:
@@ -115,12 +115,12 @@ func (p *Pipeline) asyncFilter(ctx context.Context, filterIndex int, in <-chan i
 		return finalErr
 	}
 	innerWg := &sync.WaitGroup{}
-	innerWg.Add(filter.maxWorkers())
-	for i := 0; i < filter.maxWorkers(); i++ {
+	innerWg.Add(filter.MaxWorkers())
+	for i := 0; i < filter.MaxWorkers(); i++ {
 		go func() {
 			defer innerWg.Done()
 			for elem := range in {
-				elem, err := filter.doWork(ctx, elem)
+				elem, err := filter.DoWork(ctx, elem)
 				err = setError(err)
 				if err != nil {
 					return
@@ -153,7 +153,7 @@ func (p *Pipeline) asyncSink(ctx context.Context, in <-chan interface{}, wg *syn
 		defer close(errc)
 		defer wg.Done()
 		for elem := range in {
-			err := p.sink.doWork(ctx, elem)
+			err := p.sink.DoWork(ctx, elem)
 			if err != nil {
 				errc <- err
 				return
