@@ -17,12 +17,12 @@ func (e NoMoreData) Error() string {
 
 // InvalidInputType is the error a pipeline element doWork() method should return when it receive data with the wrong type
 type InvalidInputType struct {
-	expected	string
-	actual		string
+	Expected	string
+	Actual		string
 }
 
 func (e InvalidInputType) Error() string {
-	return fmt.Sprintf("Invalid input format: expected = %s, actual = %s", e.expected, e.actual)
+	return fmt.Sprintf("Invalid input format: expected = %s, actual = %s", e.Expected, e.Actual)
 }
 
 // Source represents an element on the pipeline which has no input
@@ -45,7 +45,6 @@ type Sink interface {
 type Pipeline struct {
 	source			Source
 	filters			[]Filter
-	filterWorkers	[]chan interface{}
 	sink			Sink
 }
 

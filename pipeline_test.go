@@ -55,7 +55,7 @@ func (sink *numberSink) doWork(ctx context.Context, input interface{}) error {
 		sink.sum += v
 		sink.numberWritten++
 	default:
-		return InvalidInputType{expected: "int", actual: fmt.Sprintf("%T", v)}
+		return InvalidInputType{Expected: "int", Actual: fmt.Sprintf("%T", v)}
 	}
 	return nil
 }
@@ -74,7 +74,7 @@ func (filter *numberAdder) doWork(ctx context.Context, input interface{}) (inter
 		}
 		return v + filter.numberToAdd, nil
 	default:
-		return nil, InvalidInputType{expected: "int", actual: fmt.Sprintf("%T", v)}
+		return nil, InvalidInputType{Expected: "int", Actual: fmt.Sprintf("%T", v)}
 	}
 }
 
@@ -96,7 +96,7 @@ func (filter *numberMultiplyer) doWork(ctx context.Context, input interface{}) (
 		}
 		return v * filter.numberToMultiply, nil
 	default:
-		return nil, InvalidInputType{expected: "int", actual: fmt.Sprintf("%T", v)}
+		return nil, InvalidInputType{Expected: "int", Actual: fmt.Sprintf("%T", v)}
 	}
 }
 
