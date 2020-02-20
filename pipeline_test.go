@@ -112,7 +112,7 @@ func TestSimplePipeline(t *testing.T) {
 	stage3 := &numberAdder{numberToAdd: 5, workers: 1}
 	sink := &numberSink{}
 	p.SetSource(source).AddFilter(stage1).AddFilter(stage2).AddFilter(stage3).SetSink(sink)
-	err := p.RunPipeline(context.Background())
+	err := p.RunPipeline(context.Background(), nil, 0)
 	if err != nil {
 		t.Errorf("Error returned: %v\n", err)
 	}
@@ -129,12 +129,37 @@ func TestMultiWorkersPipeline(t *testing.T) {
 	stage3 := &numberAdder{numberToAdd: 5, workers: 3}
 	sink := &numberSink{}
 	p.SetSource(source).AddFilter(stage1).AddFilter(stage2).AddFilter(stage3).SetSink(sink)
-	err := p.RunPipeline(context.Background())
+	err := p.RunPipeline(context.Background(), nil, 0)
 	if err != nil {
 		t.Errorf("Error returned: %v\n", err)
 	}
 	if sink.sum != 350224974 || sink.numberWritten != 9999 {
 		t.Errorf("Unexpected results: sum = %d, count = %d\n", sink.sum, sink.numberWritten)
+	}
+}
+
+func TestStats(t *testing.T) {
+	p := MakePipeline()
+	source := makeNumberSource(1, 1000000, 1)
+	stage1 := &numberAdder{numberToAdd: 3, workers: 4}
+	stage2 := &numberMultiplyer{numberToMultiply: 7, workers: 2}
+	stage3 := &numberAdder{numberToAdd: 5, workers: 3}
+	sink := &numberSink{}
+	p.SetSource(source).AddFilter(stage1).AddFilter(stage2).AddFilter(stage3).SetSink(sink)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	statsCalled := false
+	err := p.RunPipeline(ctx, func(sourceStats Stats, filtersStats []Stats, sinkStats Stats) {
+		statsCalled = true
+		t.Logf("Source: %v\n", sourceStats)
+		t.Logf("Filters: %v\n", filtersStats)
+		t.Logf("Sink: %v\n", sinkStats)
+	}, time.Millisecond * 300)
+	if err != context.DeadlineExceeded {
+		t.Errorf("Unexpected error: %v\n", err)
+	}
+	if !statsCalled {
+		t.Error("Stats function wasn't called")
 	}
 }
 
@@ -148,7 +173,7 @@ func TestTimeout(t *testing.T) {
 	p.SetSource(source).AddFilter(stage1).AddFilter(stage2).AddFilter(stage3).SetSink(sink)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	err := p.RunPipeline(ctx)
+	err := p.RunPipeline(ctx, nil, 0)
 	if err != context.DeadlineExceeded {
 		t.Errorf("Unexpected error: %v\n", err)
 	}
@@ -167,7 +192,7 @@ func TestCancel(t *testing.T) {
 		time.Sleep(2 * time.Second)
 		cancel()
 	}()
-	err := p.RunPipeline(ctx)
+	err := p.RunPipeline(ctx, nil, 0)
 	if err != context.Canceled {
 		t.Errorf("Unexpected error: %v\n", err)
 	}
@@ -182,7 +207,7 @@ func TestErrorSource(t *testing.T) {
 	stage3 := &numberAdder{numberToAdd: 5, workers: 3}
 	sink := &numberSink{}
 	p.SetSource(source).AddFilter(stage1).AddFilter(stage2).AddFilter(stage3).SetSink(sink)
-	err := p.RunPipeline(context.Background())
+	err := p.RunPipeline(context.Background(), nil, 0)
 	if err == nil {
 		t.Error("No error raised")
 	} else if typedErr, ok := err.(stupidRandomError); !ok || typedErr.stage != "source" {
@@ -199,7 +224,7 @@ func TestErrorSink(t *testing.T) {
 	sink := &numberSink{}
 	sink.randomError = 10
 	p.SetSource(source).AddFilter(stage1).AddFilter(stage2).AddFilter(stage3).SetSink(sink)
-	err := p.RunPipeline(context.Background())
+	err := p.RunPipeline(context.Background(), nil, 0)
 	if err == nil {
 		t.Error("No error raised")
 	} else if typedErr, ok := err.(stupidRandomError); !ok || typedErr.stage != "sink" {
@@ -216,7 +241,7 @@ func TestErrorFilter(t *testing.T) {
 	stage3 := &numberAdder{numberToAdd: 5, workers: 3}
 	sink := &numberSink{}
 	p.SetSource(source).AddFilter(stage1).AddFilter(stage2).AddFilter(stage3).SetSink(sink)
-	err := p.RunPipeline(context.Background())
+	err := p.RunPipeline(context.Background(), nil, 0)
 	if err == nil {
 		t.Error("No error raised")
 	} else if typedErr, ok := err.(stupidRandomError); !ok || typedErr.stage != "adder" {
@@ -233,7 +258,7 @@ func TestErrorSecondFilter(t *testing.T) {
 	stage3 := &numberAdder{numberToAdd: 5, workers: 3}
 	sink := &numberSink{}
 	p.SetSource(source).AddFilter(stage1).AddFilter(stage2).AddFilter(stage3).SetSink(sink)
-	err := p.RunPipeline(context.Background())
+	err := p.RunPipeline(context.Background(), nil, 0)
 	if err == nil {
 		t.Error("No error raised")
 	} else if typedErr, ok := err.(stupidRandomError); !ok || typedErr.stage != "multiplyer" {
@@ -250,7 +275,7 @@ func TestErrorLastFilter(t *testing.T) {
 	stage3.randomError = 10
 	sink := &numberSink{}
 	p.SetSource(source).AddFilter(stage1).AddFilter(stage2).AddFilter(stage3).SetSink(sink)
-	err := p.RunPipeline(context.Background())
+	err := p.RunPipeline(context.Background(), nil, 0)
 	if err == nil {
 		t.Error("No error raised")
 	} else if typedErr, ok := err.(stupidRandomError); !ok || typedErr.stage != "adder" {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"time"
 )
 
 // NoMoreData is the "error" a source DoWork() method should return when it doesn't have any more data
@@ -41,11 +42,31 @@ type Sink interface {
 	DoWork(ctx context.Context, input interface{}) error
 }
 
+// Stats stores statistics about an element in a running pipeline
+type Stats struct {
+	Time		int64
+	Count		int64
+	Mutex		sync.RWMutex
+}
+
+func (s Stats) String() string {
+	s.Mutex.RLock()
+	defer s.Mutex.RUnlock()
+	var avg int64
+	if s.Count > 0 {
+		avg = int64(s.Time / s.Count)
+	}
+	return fmt.Sprintf("Total DoWork calls: %d\tAverage Time: %d ns", s.Count, avg)
+}
+
 // Pipeline represents a pipeline object
 type Pipeline struct {
 	source			Source
+	sourceStats		Stats
 	filters			[]Filter
+	filtersStats	[]Stats
 	sink			Sink
+	sinkStats		Stats
 }
 
 // MakePipeline creates and initialize a new pipeline object
@@ -72,6 +93,7 @@ func (p *Pipeline) AddFilter(filter Filter) *Pipeline {
 }
 
 func (p *Pipeline) asyncSource(ctx context.Context, wg *sync.WaitGroup) (<-chan interface{}, <-chan error) {
+	stats := &p.sourceStats
 	out := make(chan interface{})
 	errc := make(chan error, 1)
 	wg.Add(1)
@@ -80,7 +102,14 @@ func (p *Pipeline) asyncSource(ctx context.Context, wg *sync.WaitGroup) (<-chan 
 		defer close(errc)
 		defer wg.Done()
 		for {
+			start := time.Now()
 			elem, err := p.source.DoWork(ctx)
+			elapsed := time.Since(start)
+			stats.Mutex.Lock()
+			stats.Count++
+			stats.Time += elapsed.Nanoseconds()
+			stats.Mutex.Unlock()
+			
 			if err != nil {
 				switch err.(type) {
 				case NoMoreData:
@@ -102,6 +131,7 @@ func (p *Pipeline) asyncSource(ctx context.Context, wg *sync.WaitGroup) (<-chan 
 
 func (p *Pipeline) asyncFilter(ctx context.Context, filterIndex int, in <-chan interface{}, wg *sync.WaitGroup) (<-chan interface{}, <-chan error) {
 	filter := p.filters[filterIndex]
+	stats := &p.filtersStats[filterIndex]
 	out := make(chan interface{})
 	errc := make(chan error, 1)
 	var finalErr error
@@ -120,7 +150,13 @@ func (p *Pipeline) asyncFilter(ctx context.Context, filterIndex int, in <-chan i
 		go func() {
 			defer innerWg.Done()
 			for elem := range in {
+				start := time.Now()
 				elem, err := filter.DoWork(ctx, elem)
+				elapsed := time.Since(start)
+				stats.Mutex.Lock()
+				stats.Count++
+				stats.Time += elapsed.Nanoseconds()
+				stats.Mutex.Unlock()
 				err = setError(err)
 				if err != nil {
 					return
@@ -147,13 +183,20 @@ func (p *Pipeline) asyncFilter(ctx context.Context, filterIndex int, in <-chan i
 }
 
 func (p *Pipeline) asyncSink(ctx context.Context, in <-chan interface{}, wg *sync.WaitGroup) (<-chan error) {
+	stats := &p.sinkStats
 	errc := make(chan error, 1)
 	wg.Add(1)
 	go func() {
 		defer close(errc)
 		defer wg.Done()
 		for elem := range in {
+			start := time.Now()
 			err := p.sink.DoWork(ctx, elem)
+			elapsed := time.Since(start)
+			stats.Mutex.Lock()
+			stats.Count++
+			stats.Time += elapsed.Nanoseconds()
+			stats.Mutex.Unlock()
 			if err != nil {
 				errc <- err
 				return
@@ -181,14 +224,19 @@ func (c *closeOnce) close() {
 	c.once.Do(func() { close(c.ch) })
 }
 
+// StatsCallback is function which can be used to receive statistics from a running pipeline
+type StatsCallback func(sourceStats Stats, filtersStats []Stats, sinkStats Stats)
+
 // RunPipeline starts a pipeline and wait until it finished
-func (p *Pipeline) RunPipeline(ctx context.Context) error {
+func (p *Pipeline) RunPipeline(ctx context.Context, statsCb StatsCallback, statsperiod time.Duration) error {
+	p.filtersStats = make([]Stats, len(p.filters))
 	errorChannels := make([]reflect.SelectCase, len(p.filters)+3) // +3 = source + sink + WaitGroup signaling
 	myctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	wg := &sync.WaitGroup{}
 	wgChannel := makeCloseOnce()
 	wgChannelIndex := len(p.filters)+2
+
 	out, errc := p.asyncSource(myctx, wg)
 	errorChannels[0] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(errc)}
 	for filterIndex := range p.filters {
@@ -198,8 +246,31 @@ func (p *Pipeline) RunPipeline(ctx context.Context) error {
 	errc = p.asyncSink(myctx, out, wg)
 	
 	go func() {
+		var ticker *time.Ticker
+		stopTicker := make(chan struct{}, 1)
+		if statsCb != nil {
+			ticker = time.NewTicker(statsperiod)
+			go func() {
+				for {
+					select {
+					case <-ticker.C:
+						sourceStats := p.sourceStats
+						filtersStats := make([]Stats, len(p.filtersStats))
+						copy(filtersStats, p.filtersStats)
+						sinkStats := p.sinkStats
+						statsCb(sourceStats, filtersStats, sinkStats)
+					case <-stopTicker:
+						return
+					}
+				}
+			}()
+		}
 		wg.Wait()
 		wgChannel.close()
+		if statsCb != nil {
+			ticker.Stop()
+			close(stopTicker)
+		}
 	}()
 	
 	errorChannels[len(p.filters)+1] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(errc)}
