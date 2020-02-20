@@ -22,6 +22,7 @@ type numberSource struct {
 	jump		int
 	current		int
 	randomError	int
+	dropBy		int
 }
 
 func makeNumberSource(start, end, jump int) *numberSource {
@@ -35,6 +36,9 @@ func (src *numberSource) DoWork(ctx context.Context) (interface{}, error) {
 	if src.current < src.end {
 		res := src.current
 		src.current += src.jump
+		if src.dropBy > 0 && res % src.dropBy == 0 {
+			return nil, DataDropped{}
+		}
 		return res, nil
 	}
 	return nil, NoMoreData{}
@@ -104,6 +108,27 @@ func (filter *numberMultiplyer) MaxWorkers() int {
 	return filter.workers
 }
 
+type numberDropper struct {
+	dropBy					int
+	workers					int
+}
+
+func (filter *numberDropper) DoWork(ctx context.Context, input interface{}) (interface{}, error) {
+	switch v := input.(type) {
+	case int:
+		if v % filter.dropBy == 0 {
+			return nil, DataDropped{}
+		}
+		return v, nil
+	default:
+		return nil, InvalidInputType{Expected: "int", Actual: fmt.Sprintf("%T", v)}
+	}
+}
+
+func (filter *numberDropper) MaxWorkers() int {
+	return filter.workers
+}
+
 func TestSimplePipeline(t *testing.T) {
 	p := MakePipeline()
 	source := makeNumberSource(1, 10, 1)
@@ -134,6 +159,25 @@ func TestMultiWorkersPipeline(t *testing.T) {
 		t.Errorf("Error returned: %v\n", err)
 	}
 	if sink.sum != 350224974 || sink.numberWritten != 9999 {
+		t.Errorf("Unexpected results: sum = %d, count = %d\n", sink.sum, sink.numberWritten)
+	}
+}
+
+func TestDrops(t *testing.T) {
+	p := MakePipeline()
+	source := makeNumberSource(1, 20, 1)
+	source.dropBy = 2
+	stage1 := &numberDropper{dropBy: 3, workers: 4}
+	stage2 := &numberDropper{dropBy: 5, workers: 4}
+	stage3 := &numberDropper{dropBy: 7, workers: 4}
+	sink := &numberSink{}
+	p.SetSource(source).AddFilter(stage1).AddFilter(stage2).AddFilter(stage3).SetSink(sink)
+	ctx := context.Background()
+	err := p.RunPipeline(ctx, nil, 0)
+	if err != nil {
+		t.Errorf("Unexpected error: %v\n", err)
+	}
+	if sink.numberWritten != 5 || sink.sum != 61 {
 		t.Errorf("Unexpected results: sum = %d, count = %d\n", sink.sum, sink.numberWritten)
 	}
 }

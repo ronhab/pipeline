@@ -16,6 +16,14 @@ func (e NoMoreData) Error() string {
 	return "Not an error: no more data"
 }
 
+// DataDropped is an "error" each pipeline element can return if it wants the current data to be dropped
+type DataDropped struct {
+}
+
+func (e DataDropped) Error() string {
+	return "Not an error: data dropped"
+}
+
 // InvalidInputType is the error a pipeline element DoWork() method should return when it receive data with the wrong type
 type InvalidInputType struct {
 	Expected	string
@@ -46,17 +54,31 @@ type Sink interface {
 type Stats struct {
 	Time		int64
 	Count		int64
+	Dropped		int64
 	Mutex		sync.RWMutex
 }
 
 func (s Stats) String() string {
 	s.Mutex.RLock()
 	defer s.Mutex.RUnlock()
-	var avg int64
+	var avg float64
 	if s.Count > 0 {
-		avg = int64(s.Time / s.Count)
+		avg = float64(s.Time) / (float64(s.Count) * float64(1000000))
 	}
-	return fmt.Sprintf("Total DoWork calls: %d\tAverage Time: %d ns", s.Count, avg)
+	return fmt.Sprintf("Total DoWork calls: %d, Average Time: %.2f ms, Dropped data: %d", s.Count, avg, s.Dropped)
+}
+
+func (s *Stats) addSample(elapsed time.Duration, err error) {
+	s.Mutex.Lock()
+	s.Count++
+	s.Time += elapsed.Nanoseconds()
+	if err != nil {
+		_, ok := err.(DataDropped)
+		if ok {
+			s.Dropped++
+		}
+	}
+	s.Mutex.Unlock()
 }
 
 // Pipeline represents a pipeline object
@@ -105,15 +127,14 @@ func (p *Pipeline) asyncSource(ctx context.Context, wg *sync.WaitGroup) (<-chan 
 			start := time.Now()
 			elem, err := p.source.DoWork(ctx)
 			elapsed := time.Since(start)
-			stats.Mutex.Lock()
-			stats.Count++
-			stats.Time += elapsed.Nanoseconds()
-			stats.Mutex.Unlock()
+			stats.addSample(elapsed, err)
 			
 			if err != nil {
 				switch err.(type) {
 				case NoMoreData:
 					return
+				case DataDropped:
+					continue
 				default:
 					errc <- err
 					return
@@ -153,10 +174,10 @@ func (p *Pipeline) asyncFilter(ctx context.Context, filterIndex int, in <-chan i
 				start := time.Now()
 				elem, err := filter.DoWork(ctx, elem)
 				elapsed := time.Since(start)
-				stats.Mutex.Lock()
-				stats.Count++
-				stats.Time += elapsed.Nanoseconds()
-				stats.Mutex.Unlock()
+				stats.addSample(elapsed, err)
+				if _, ok := err.(DataDropped); ok {
+					continue
+				}
 				err = setError(err)
 				if err != nil {
 					return
@@ -193,10 +214,10 @@ func (p *Pipeline) asyncSink(ctx context.Context, in <-chan interface{}, wg *syn
 			start := time.Now()
 			err := p.sink.DoWork(ctx, elem)
 			elapsed := time.Since(start)
-			stats.Mutex.Lock()
-			stats.Count++
-			stats.Time += elapsed.Nanoseconds()
-			stats.Mutex.Unlock()
+			stats.addSample(elapsed, err)
+			if _, ok := err.(DataDropped); ok {
+				continue
+			}
 			if err != nil {
 				errc <- err
 				return
